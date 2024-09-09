@@ -1,18 +1,14 @@
 import math
 from dataclasses import dataclass
 
-import torch
 from einops import rearrange
-from torch import Tensor, nn
 
 from flax import linen as nn
-from flax.linen import Module, compact
-from flax.linen.initializers import normal, zeros
+from flax.linen import compact
 
 from jax import numpy as jnp
 
-from typing import Any, Callable, Optional, Tuple
-import jax
+from typing import Tuple
 
 from flux_jax.math import rope, attention
 
@@ -67,34 +63,6 @@ class QKNorm(nn.Module):
         q = nn.RMSNorm(name='query_norm')(q)
         k = nn.RMSNorm(name='key_norm')(k)
         return q.astype(v.dtype), k.astype(v.dtype)
-    def __init__(self, dim: int):
-        super().__init__()
-        self.query_norm = RMSNorm(dim)
-        self.key_norm = RMSNorm(dim)
-
-    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
-        q = self.query_norm(q)
-        k = self.key_norm(k)
-        return q.to(v), k.to(v)
-
-class SelfAttention_o(torch.nn.Module):
-    def __init__(self, dim: int, num_heads: int = 8, qkv_bias: bool = False):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-
-        self.qkv = torch.nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.norm = QKNorm_o(head_dim)
-        self.proj = torch.nn.Linear(dim, dim)
-
-    def forward(self, x: Tensor, pe: Tensor) -> Tensor:
-        qkv = self.qkv(x)
-        q, k, v = rearrange(qkv, "B L (K H D) -> K B H L D", K=3, H=self.num_heads)
-        q, k = self.norm(q, k, v)
-        x = attention_o(q, k, v, pe=pe)
-        x = self.proj(x)
-        return x
-    
 class SelfAttention(nn.Module):
     dim: int
     num_heads: int = 8
@@ -121,9 +89,9 @@ class SelfAttention(nn.Module):
     
 @dataclass
 class ModulationOut:
-    shift: Tensor
-    scale: Tensor
-    gate: Tensor
+    shift: jnp.ndarray
+    scale: jnp.ndarray
+    gate: jnp.ndarray
 
 class Modulation(nn.Module):
     dim: int
@@ -133,16 +101,13 @@ class Modulation(nn.Module):
         self.multiplier = 6 if self.is_double else 3
         self.lin = nn.Dense(self.multiplier * self.dim, use_bias=True)
 
-    def __call__(self, vec: Tensor) -> tuple[ModulationOut, ModulationOut | None]:
+    def __call__(self, vec: jnp.ndarray) -> tuple[ModulationOut, ModulationOut | None]:
         out = jnp.split(self.lin(nn.silu(vec))[:, None, :], self.multiplier, axis=-1)
 
         return (
             ModulationOut(*out[:3]),
             ModulationOut(*out[3:]) if self.is_double else None,
         )
-    
-from typing import Tuple
-from flax.core.frozen_dict import FrozenDict
 
 class DoubleStreamBlock(nn.Module):
     hidden_size: int
@@ -206,7 +171,7 @@ class DoubleStreamBlock(nn.Module):
         txt = txt + txt_mod2.gate * self.txt_mlp((1 + txt_mod2.scale) * self.txt_norm2(txt) + txt_mod2.shift)
         return img, txt
     
-class SingleStremBlock(nn.Module):
+class SingleStreamBlock(nn.Module):
     hidden_size: int
     num_heads: int
     mlp_ratio: float = 4.0

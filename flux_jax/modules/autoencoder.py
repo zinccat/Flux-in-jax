@@ -1,16 +1,13 @@
 from dataclasses import dataclass
 
-import torch
 from einops import rearrange
 # from torch import Tensor, nn
 
 from flax import linen as nn
-from flax.linen import Module, compact
-from flax.linen.initializers import normal, zeros
+from flax.linen import compact
 from jax import numpy as jnp
 import jax
 
-from typing import Any, Callable, Optional, Tuple
 
 
 @dataclass
